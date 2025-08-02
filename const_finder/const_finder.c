@@ -44,13 +44,13 @@ void main(int argc, char *argv[]) {
     int testNum = 2;
 	double primeDouble;
 
-    while (constantsFound < primesNeeded) {
+    while (constantsFound < constantsNeeded) {
         if (isPrime(testNum)) {
             primeDouble = testNum;
 
             constantsFound++;
             uint32_t shaConstant = determineShaConstant(testNum);
-            printf("SHA Constant #%d: Prime %d    Constant:%08x\n", constantsFound, testNum, shaConstant);
+            printf("SHA Constant %2d: Prime %-3d    Constant: %08x\n", constantsFound, testNum, shaConstant);
         }
 
         testNum++;
