@@ -6,7 +6,16 @@
 // Function declarations
 void checkProgramArgValidity(int argc);
 bool checkEndianness();
-void openAndReadFile(FILE* filePointer, char* filePath);
+void openAndAnalyzeFile(FILE* filePointer, char* filePath);
+void shaProcessData(char* filePath);
+
+// Common SHA functions
+uint32_t lowSig0(uint32_t x);
+uint32_t lowSig1(uint32_t x);
+uint32_t upSig0(uint32_t x);
+uint32_t upSig1(uint32_t x);
+uint32_t choice(uint32_t x, uint32_t y, uint32_t z);
+uint32_t maj(uint32_t x, uint32_t y, uint32_t z);
 
 //Constants
 // Square root constants
