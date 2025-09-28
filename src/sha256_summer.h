@@ -3,11 +3,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// Structs used
+typedef struct MsgBlock {
+    uint32_t msgSchedule[64];
+} MsgBlock;
+
 // Function declarations
 void checkProgramArgValidity(int argc);
 bool checkEndianness();
 void openAndAnalyzeFile(FILE* filePointer, char* filePath);
-void shaProcessData(char* filePath);
+void shaProcessData();
+void generateMsgSchedule(MsgBlock *msgBlock);
 
 // Common SHA functions
 uint32_t lowSig0(uint32_t x);
