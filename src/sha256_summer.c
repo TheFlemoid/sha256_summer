@@ -32,13 +32,17 @@ int paddingNeeded;           // Bits of padding needed without length encoding.
 // Index 5: f
 // Index 6: g
 // Index 7: h
-uint32_t workingRegisters[8];
+// These are initialized to the square constants on program instantiation
+uint32_t workingRegisters[8] = {squareConst[0], squareConst[1], squareConst[2],
+                                squareConst[3], squareConst[4], squareConst[5],
+                                squareConst[6], squareConst[7]};
 
 // Temp registers, used to temporarily hold the values of the working registers
 // during processing.
 uint32_t tempRegisters[8];
 
 MsgBlock msgBlock;
+MsgSchedule msgSchedule;
 
 // Temporary values
 uint32_t T1;
@@ -52,14 +56,7 @@ void main(int argc, char *argv[]) {
     checkProgramArgValidity(argc);
     openAndAnalyzeFile(filePointer, argv[1]);
 
-    // Initialize working registers with default values
-    //for (int i = 0; i < 8; i++) {
-    //    workingRegisters[i] = squareConst[i];
-    //}
-
     printf("File Size: %ld bytes\n", fileSize);
-
-    shaProcessData();
 
     //free(workingRegisters);
 }
@@ -78,97 +75,6 @@ void checkProgramArgValidity(int argc) {
     }
 }
 
-/**
- * Actually performs the SHA-256 calculation.
- * Updates the working registers.  By the end of the function, the working registers are 
- * updated to the final hash.
- */
-void shaProcessData() {
-    bool fileEndReached = false;
-    long bytesRemaining = fileSize;
-    int blocksRemaining = blocksNeeded;
-    int BLOCK_SIZE = 16;
-
-    int currentBufferIndex = 0;
-
-    // Initialize the working registers to their default values
-    for (int i = 0; i < 8; i++) {
-        workingRegisters[i] = squareConst[i];
-    }
-
-    // While through the file until we get to the last block.  The last block is treated special,
-    // as it includes padding and length encoding.
-    while (bytesRemaining > 64) {
-        for(int i = 0; i < 16; i++) {
-            msgBlock.msgSchedule[i] = messageBuffer[currentBufferIndex];
-            currentBufferIndex++;
-        }
-        bytesRemaining -= 64;
-
-        generateMsgSchedule(&msgBlock);
-
-        // Test code
-        printf("Message Schedule:\n");
-        for (int i = 0; i < 64; i++) {
-            printf("%d: 0x%08x\n", i, msgBlock.msgSchedule[i]); 
-        }
-
-        printf("\n\n");
-
-        // Process the message schedule here.
-    }
-
-    // At this point, we're at either the last or second to last (if no room for length encoding)
-    // block.
-    int dataEnd = fileWordSize - currentBufferIndex;
-    printf("Words remaining: %d\n", dataEnd);
-    for (int i = 0; i < dataEnd; i++) {
-        msgBlock.msgSchedule[i] = messageBuffer[currentBufferIndex];
-        currentBufferIndex++;
-    }
-
-    generateMsgSchedule(&msgBlock);
-
-    // Test code
-    printf("Message Schedule:\n");
-    for (int i = 0; i < 64; i++) {
-        printf("%d: 0x%08x\n", i, msgBlock.msgSchedule[i]); 
-    }
-
-    printf("\n\n");
-}
-
-/**
- * Only the first 16 registers of the message block contain actual data, the other 48
- * registers are initialized to values based on the first 16 registers.  Given a block
- * with the first 16 registers filled out, this fills out the rest of the schedule.
- */
-void generateMsgSchedule(MsgBlock *msgBlock) {
-    for (int i = 16; i < 64; i++) {
-        msgBlock -> msgSchedule[i] = lowSig1(msgBlock -> msgSchedule[i - 2]) + 
-                                   msgBlock -> msgSchedule[i - 7] + 
-                                   lowSig0(msgBlock -> msgSchedule[i - 15]) +
-                                   msgBlock -> msgSchedule[i - 16];
-    } 
-}
-
-/**
- * Returns true if the system is big endian, otherwise false.
- *
- * NOTE: I have no idea why, but this appears to be backwards.  If I follow this,
- *       the bytes end up in reverse order on the buffer.
- */
-bool checkEndianness() {
-    int num = 1;
-    
-    if (*((char *)&num) == 1) {
-        printf("Little endian system detected.\n");
-        return false;
-    } else {
-        printf("Big endian system detected.\n");
-        return true;
-    }
-}
 
 /**
  * Opens and analyzes the file passed in as the argument to 
@@ -210,18 +116,46 @@ void openAndAnalyzeFile(FILE* filePointer, char* filePath) {
     /* TODO: Do this one block at a time instead of reading in the entire file to save on memory.  
              Having difficulty with fread, lets get this working then optimize. */
 
-    messageBuffer = malloc(sizeof(uint32_t) * fileWordSize);
-    fread(messageBuffer, sizeof(uint32_t), fileWordSize, filePointer);
+    // We add one byte to the end of the byte buffer, for the one byte (0x80) padding.
+    // When converting to doing this one block at a time, will only need to do this for
+    // the last block.
+    uint8_t *byteBuffer = malloc(sizeof(uint8_t) * (fileSize + 1));
+    fread(byteBuffer, sizeof(uint8_t), fileSize, filePointer);
     fclose(filePointer);
-
-    bool isBigEndian = checkEndianness();
-
-    // Reverse the buffer if the file system is big endian
-    if (!isBigEndian) {
-        for(int i = 0; i < fileWordSize; i++) {
-            messageBuffer[i] = __builtin_bswap32(messageBuffer[i]);
+    byteBuffer[fileSize] = 0x80;
+    for (int i = 0; i <= fileSize; i++) {
+        if ((i % 4) == 0) {
+            printf("\n");
         }
+
+        printf("%02x ", byteBuffer[i]);
     }
+    printf("\n");
+
+    // TODO: All this needs to change for multi block calculation
+    generateMsgBlock(byteBuffer, fileSize+1, true, &msgBlock);
+    generateMsgSchedule(&msgBlock, &msgSchedule);
+
+    //filePointer=fopen(filePath, "rb");
+    //int messageBufferSize = (sizeof(uint32_t) * fileWordSize);
+    //messageBuffer = malloc(sizeof(uint32_t) * fileWordSize);
+    //fread(messageBuffer, sizeof(uint32_t), fileWordSize, filePointer);
+    //fclose(filePointer);
+
+    //bool isBigEndian = checkEndianness();
+
+    //// Reverse the buffer if the file system is big endian
+    //if (!isBigEndian) {
+    //    for(int i = 0; i < fileWordSize; i++) {
+    //        messageBuffer[i] = __builtin_bswap32(messageBuffer[i]);
+    //    }
+    //}
+
+    // Adding 1 byte of padding to the (0b10000000)
+    //int bytesInLastWord = fileSize % 4;
+    //printf("Message buffer size: %d\n", messageBufferSize);
+    //printf("Bytes in last word: %d\n", bytesInLastWord);
+    //printf("Last word: %032x\n", messageBuffer[fileWordSize - 1]);
 
     bitsInLastBlock = (fileSize * 8) % 512;
     lastBlockSizeOverflow = ((512 - bitsInLastBlock) < 64);
@@ -243,6 +177,91 @@ void openAndAnalyzeFile(FILE* filePointer, char* filePath) {
     printf("Message blocks needed: %d\nBits in the last block: %d\nPadding"
            " needed (without length encoding): %d\n", blocksNeeded, 
            bitsInLastBlock, paddingNeeded);
+}
+
+/**
+ * Generates a 512 bit (16 word) message block from the param byte buffer.
+ * If the this block is the last one in the message, appends the message
+ * length as an unsigned 64 bit integer to the end of the block.
+ *
+ * @param byteBuffer Byte buffer to use
+ * @param bufferLength length of the param byte buffer in bytes
+ * @param lastBlock true if this is the last block of the message, otherwise false
+ * @param MsgBlock pointer to fill out for result
+ */
+void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock, 
+        MsgBlock *msgBlock) {
+
+    // We know we're setting all registers in the block every time, so no need to
+    // initialize anything to 0.
+
+    int byteCount = 0;
+    int wordCount = 0;
+    if (lastBlock) {
+        for (int i = 0; i < 56; i+=4) {
+            for (int j = 0; j < 4; j++) {
+                if (byteCount < bufferLength) {
+                    // If there are bytes remaining, bitshift them into the word
+                    msgBlock->blockWords[wordCount] = 
+                        (msgBlock->blockWords[wordCount] << 8) | byteBuffer[byteCount];
+                    byteCount++;
+                } else {
+                    // Otherwise just bitshift zeros into the word
+                    msgBlock->blockWords[wordCount] = (msgBlock->blockWords[wordCount] << 8);
+                }
+            }
+            wordCount++;
+        }
+
+        // Since this is the last block, the last two words (8 bytes) are the original
+        // length of the message in bits, as an unsigned 64 bit integer.
+        uint64_t messageLength = (uint64_t)fileSize * 8;
+        msgBlock->blockWords[14] = (messageLength >> 32) | msgBlock->blockWords[14];
+        msgBlock->blockWords[15] = messageLength | msgBlock->blockWords[15];
+    }
+
+    printf("\n");
+    for (int i = 0; i < 16; i++) {
+        printf("0x%08x\n", msgBlock->blockWords[i]);
+    }
+}
+
+/**
+ * Only the first 16 registers of the message block contain actual data, the other 48
+ * registers are initialized to values based on the first 16 registers.  Given a block
+ * with the first 16 registers filled out, this fills out the rest of the schedule.
+ */
+void generateMsgSchedule(MsgBlock *msgBlock, MsgSchedule *msgSchedule) {
+    // We know we'll be filling out the whole schedule, so we don't need to initialize
+    // anything to 0.
+    // The first 16 words in the schedule are just the message block
+    for (int i = 0; i < 16; i++) {
+        msgSchedule->scheduleWords[i] = msgBlock->blockWords[i];
+    }
+    for (int i = 16; i < 64; i++) {
+        msgSchedule -> scheduleWords[i] = lowSig1(msgSchedule->scheduleWords[i - 2]) + 
+                                          msgSchedule->scheduleWords[i - 7] + 
+                                          lowSig0(msgSchedule->scheduleWords[i - 15]) +
+                                          msgSchedule->scheduleWords[i - 16];
+    }
+
+    printf("\n");
+    for(int i = 0; i < 64; i++) {
+        printf("W%2d 0x%08x\n", i, msgSchedule->scheduleWords[i]);
+    }
+}
+
+/**
+ * Performs the SHA-256 algorithm on the param message schedule, updating the working.
+ *
+ * @param MsgSchedule pointer of data to execute on
+ */
+void shaProcessMsgSchedule(MsgSchedule *msgSchedule) {
+    // Copy all the working registers to the temp registers, to add that
+    // data back in after performing compression.
+    for (int i = 0 ; i < 8; i++) {
+        tempRegisters[i] = workingRegisters[i];
+    }
 }
 
 // SHA-256 primitive functions
