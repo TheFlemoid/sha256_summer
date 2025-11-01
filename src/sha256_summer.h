@@ -1,3 +1,10 @@
+/**
+ * File:       sha256_summer.h
+ * Author:     Franklyn Dahlberg
+ * Created:    03 August, 2025
+ * Copyright:  2025 (c) Franklyn Dahlberg
+ */
+
 #pragma once
 #include <stdio.h>
 #include <stdint.h>
@@ -6,14 +13,14 @@
 // Structs used
 // A message block is a (potentially padded) struct of 16 words
 // of actual message data, upon which the message schedule is created.
-typedef struct MsgBlock {
+typedef struct _MsgBlock {
     uint32_t blockWords[16];
 } MsgBlock;
 
 // A message schedule is a set of 64 words, the first 16 of which
 // are message data, the rest of which are generated based on the
 // message data.
-typedef struct MsgSchedule {
+typedef struct _MsgSchedule {
     uint32_t scheduleWords[64];
 } MsgSchedule;
 
@@ -21,11 +28,11 @@ typedef struct MsgSchedule {
 void checkProgramArgValidity(int argc);
 bool checkEndianness();
 void openAndAnalyzeFile(FILE* filePointer, char* filePath);
-void shaProcessData(MsgSchedule *msgSchedule);
 void generateMsgSchedule(MsgBlock *msgBlock, MsgSchedule *msgSchedule);
 void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock, 
                         MsgBlock *msgBlock);
-void initializeWorkingRegisters();
+void shaProcessMsgSchedule(MsgSchedule *msgSchedule);
+void printWorkingRegisters();
 
 // Common SHA functions
 uint32_t lowSig0(uint32_t x);

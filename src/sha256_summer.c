@@ -62,21 +62,6 @@ void main(int argc, char *argv[]) {
 }
 
 /**
- * Checks the arguments provided to the program runtime and verifies they
- * are valid.  If they are invalid, exit the program.
- */
-void checkProgramArgValidity(int argc) {
-    if (argc != 2) {
-        printf("Pass the absolute or relative path to the file to hash as" 
-                " an argument to this program.\n");
-        printf("\tEg. ./sha256_summer /path/to/file\n");
-        printf("Exiting.\n\n");
-        exit(2);
-    }
-}
-
-
-/**
  * Opens and analyzes the file passed in as the argument to 
  * this program. Calculates the number of blocks required to 
  * hash the file, the amount of padding needed, and whether 
@@ -123,39 +108,12 @@ void openAndAnalyzeFile(FILE* filePointer, char* filePath) {
     fread(byteBuffer, sizeof(uint8_t), fileSize, filePointer);
     fclose(filePointer);
     byteBuffer[fileSize] = 0x80;
-    for (int i = 0; i <= fileSize; i++) {
-        if ((i % 4) == 0) {
-            printf("\n");
-        }
-
-        printf("%02x ", byteBuffer[i]);
-    }
-    printf("\n");
 
     // TODO: All this needs to change for multi block calculation
     generateMsgBlock(byteBuffer, fileSize+1, true, &msgBlock);
     generateMsgSchedule(&msgBlock, &msgSchedule);
-
-    //filePointer=fopen(filePath, "rb");
-    //int messageBufferSize = (sizeof(uint32_t) * fileWordSize);
-    //messageBuffer = malloc(sizeof(uint32_t) * fileWordSize);
-    //fread(messageBuffer, sizeof(uint32_t), fileWordSize, filePointer);
-    //fclose(filePointer);
-
-    //bool isBigEndian = checkEndianness();
-
-    //// Reverse the buffer if the file system is big endian
-    //if (!isBigEndian) {
-    //    for(int i = 0; i < fileWordSize; i++) {
-    //        messageBuffer[i] = __builtin_bswap32(messageBuffer[i]);
-    //    }
-    //}
-
-    // Adding 1 byte of padding to the (0b10000000)
-    //int bytesInLastWord = fileSize % 4;
-    //printf("Message buffer size: %d\n", messageBufferSize);
-    //printf("Bytes in last word: %d\n", bytesInLastWord);
-    //printf("Last word: %032x\n", messageBuffer[fileWordSize - 1]);
+    shaProcessMsgSchedule(&msgSchedule);
+    printWorkingRegisters();
 
     bitsInLastBlock = (fileSize * 8) % 512;
     lastBlockSizeOverflow = ((512 - bitsInLastBlock) < 64);
@@ -198,7 +156,8 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
     int byteCount = 0;
     int wordCount = 0;
     if (lastBlock) {
-        for (int i = 0; i < 56; i+=4) {
+        // Since this is the last block, only fill the first 14 words
+        for (int i = 0; i < 14; i++) {
             for (int j = 0; j < 4; j++) {
                 if (byteCount < bufferLength) {
                     // If there are bytes remaining, bitshift them into the word
@@ -213,16 +172,11 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
             wordCount++;
         }
 
-        // Since this is the last block, the last two words (8 bytes) are the original
-        // length of the message in bits, as an unsigned 64 bit integer.
+        // Since this is the last block, the last two words (8 bytes/64bits) are the 
+        // original length of the message in bits, as an unsigned 64 bit integer.
         uint64_t messageLength = (uint64_t)fileSize * 8;
         msgBlock->blockWords[14] = (messageLength >> 32) | msgBlock->blockWords[14];
         msgBlock->blockWords[15] = messageLength | msgBlock->blockWords[15];
-    }
-
-    printf("\n");
-    for (int i = 0; i < 16; i++) {
-        printf("0x%08x\n", msgBlock->blockWords[i]);
     }
 }
 
@@ -230,6 +184,9 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
  * Only the first 16 registers of the message block contain actual data, the other 48
  * registers are initialized to values based on the first 16 registers.  Given a block
  * with the first 16 registers filled out, this fills out the rest of the schedule.
+ *
+ * @param msgBlock object to generate the schedule for
+ * @param msgSchedule object to fill out
  */
 void generateMsgSchedule(MsgBlock *msgBlock, MsgSchedule *msgSchedule) {
     // We know we'll be filling out the whole schedule, so we don't need to initialize
@@ -238,16 +195,12 @@ void generateMsgSchedule(MsgBlock *msgBlock, MsgSchedule *msgSchedule) {
     for (int i = 0; i < 16; i++) {
         msgSchedule->scheduleWords[i] = msgBlock->blockWords[i];
     }
+    // The remaining 48 words are generated based on the first 16
     for (int i = 16; i < 64; i++) {
         msgSchedule -> scheduleWords[i] = lowSig1(msgSchedule->scheduleWords[i - 2]) + 
                                           msgSchedule->scheduleWords[i - 7] + 
                                           lowSig0(msgSchedule->scheduleWords[i - 15]) +
                                           msgSchedule->scheduleWords[i - 16];
-    }
-
-    printf("\n");
-    for(int i = 0; i < 64; i++) {
-        printf("W%2d 0x%08x\n", i, msgSchedule->scheduleWords[i]);
     }
 }
 
@@ -261,6 +214,52 @@ void shaProcessMsgSchedule(MsgSchedule *msgSchedule) {
     // data back in after performing compression.
     for (int i = 0 ; i < 8; i++) {
         tempRegisters[i] = workingRegisters[i];
+    }
+
+    for (int i = 0; i < 64; i++) {
+        T1 = upSig1(workingRegisters[4]) + 
+             choice(workingRegisters[4], workingRegisters[5], workingRegisters[6]) + 
+             workingRegisters[7] + cubicConst[i] + msgSchedule->scheduleWords[i];
+        T2 = upSig0(workingRegisters[0]) + 
+             maj(workingRegisters[0], workingRegisters[1], workingRegisters[2]);
+
+        // Shift all registers to the right one place (h registers falls off)
+        for (int j = 7; j > 0; j--) {
+            workingRegisters[j] = workingRegisters[j - 1];
+        }
+
+        workingRegisters[0] = T1 + T2;
+        workingRegisters[4] = workingRegisters[4] + T1;
+    }
+
+    // Add the temp registers (registers before compression) back into 
+    // the working registers
+    for(int i = 0; i < 8; i++) {
+        workingRegisters[i] = workingRegisters[i] + tempRegisters[i];
+    }
+}
+
+/**
+ * Prints the working registers in hex form
+ */
+void printWorkingRegisters() {
+    for (int i = 0; i < 8; i++) {
+        printf("%04x", workingRegisters[i]);
+    }
+    printf("\n");
+}
+
+/**
+ * Checks the arguments provided to the program runtime and verifies they
+ * are valid.  If they are invalid, exit the program.
+ */
+void checkProgramArgValidity(int argc) {
+    if (argc != 2) {
+        printf("Pass the absolute or relative path to the file to hash as" 
+                " an argument to this program.\n");
+        printf("\tEg. ./sha256_summer /path/to/file\n");
+        printf("Exiting.\n\n");
+        exit(2);
     }
 }
 
@@ -336,3 +335,4 @@ uint32_t choice(uint32_t x, uint32_t y, uint32_t z) {
 uint32_t maj(uint32_t x, uint32_t y, uint32_t z) {
     return (x & y) ^ (x & z) ^ (y & z);
 }
+
