@@ -12,6 +12,8 @@
 
 #include "sha256_summer.h"
 
+const int SHA_BLOCK_SIZE_BYTES = 64;
+
 FILE* filePointer;
 uint32_t *messageBuffer;
 
@@ -41,24 +43,21 @@ uint32_t workingRegisters[8] = {squareConst[0], squareConst[1], squareConst[2],
 // during processing.
 uint32_t tempRegisters[8];
 
-MsgBlock msgBlock;
-MsgSchedule msgSchedule;
-
 // Temporary values
 uint32_t T1;
 uint32_t T2;
+
+// Buffer for reading the file in
+uint8_t fileReadBuffer[512];
 
 /**
  * Program main
  */
 void main(int argc, char *argv[]) {
-
     checkProgramArgValidity(argc);
-    openAndAnalyzeFile(filePointer, argv[1]);
-
-    printf("File Size: %ld bytes\n", fileSize);
-
-    //free(workingRegisters);
+    analyzeFile(filePointer, argv[1]);
+    shaProcessFile(filePointer, argv[1]);
+    printWorkingRegisters();
 }
 
 /**
@@ -71,7 +70,7 @@ void main(int argc, char *argv[]) {
  * @param filePointer pointer to the FILE object to load
  * @param filePath path to the file on the system
  */
-void openAndAnalyzeFile(FILE* filePointer, char* filePath) {
+void analyzeFile(FILE* filePointer, char* filePath) {
     filePointer = fopen(filePath, "rb");
     if (filePointer == NULL) {
         printf("Error opening file: %s\nExiting.\n\n", filePath);
@@ -88,6 +87,7 @@ void openAndAnalyzeFile(FILE* filePointer, char* filePath) {
     // The length of the file in bytes
     fileSize = ftell(filePointer);
     rewind(filePointer);
+    fclose(filePointer);
 
     // The length of the file in 32 bit words.  We may add an additional
     // word at the end if the last byte is truncated by integer division.
@@ -95,25 +95,6 @@ void openAndAnalyzeFile(FILE* filePointer, char* filePath) {
     if ((fileSize % 4) != 0) {
         fileWordSize++;
     }
-
-    printf("File word size: %ld\n", fileWordSize);
-
-    /* TODO: Do this one block at a time instead of reading in the entire file to save on memory.  
-             Having difficulty with fread, lets get this working then optimize. */
-
-    // We add one byte to the end of the byte buffer, for the one byte (0x80) padding.
-    // When converting to doing this one block at a time, will only need to do this for
-    // the last block.
-    uint8_t *byteBuffer = malloc(sizeof(uint8_t) * (fileSize + 1));
-    fread(byteBuffer, sizeof(uint8_t), fileSize, filePointer);
-    fclose(filePointer);
-    byteBuffer[fileSize] = 0x80;
-
-    // TODO: All this needs to change for multi block calculation
-    generateMsgBlock(byteBuffer, fileSize+1, true, &msgBlock);
-    generateMsgSchedule(&msgBlock, &msgSchedule);
-    shaProcessMsgSchedule(&msgSchedule);
-    printWorkingRegisters();
 
     bitsInLastBlock = (fileSize * 8) % 512;
     lastBlockSizeOverflow = ((512 - bitsInLastBlock) < 64);
@@ -132,9 +113,102 @@ void openAndAnalyzeFile(FILE* filePointer, char* filePath) {
                               // padding and message length encoding.
     }
 
+    printf("File Size: %ld bytes\n", fileSize);
+    printf("File word size: %ld\n", fileWordSize);
+
     printf("Message blocks needed: %d\nBits in the last block: %d\nPadding"
            " needed (without length encoding): %d\n", blocksNeeded, 
            bitsInLastBlock, paddingNeeded);
+}
+
+/**
+ * Performs the SHA-256 algorithm on the param file.
+ *
+ * @param filePointer file pointer to the file to process
+ * @param filePath path to the file to process
+ */
+void shaProcessFile(FILE* filePointer, char* filePath) {
+    filePointer = fopen(filePath, "rb");
+    long long bytesRemaining = fileSize;
+
+    int bytesRead = 0;
+    bool fileStopByteAdded = false;
+    bool eofReached = false;
+
+    MsgBlock msgBlock;
+    MsgSchedule msgSchedule;
+
+    // Read the file in block by block, processing each block as it is read
+    // Six possible outcomes in the read phase:
+    //  1. SHA_BLOCK_SIZE can be read without reaching EOF: in which case just read the bytes
+    //     in and process them.
+    //  2. File ends before SHA_BLOCK_SIZE, but 'file_end + 1 byte (file stop indicator) + 8 bytes
+    //     (file size encoding)' is less than SHA_BLOCK_SIZE: in which case read the file in, append
+    //     0x80 to the byte immediately following EOF, and process it, flag that this is the last block.
+    //  3. File ends at SHA_BLOCK_SIZE EXACTLY: in which case read the file in and process it.  We'll
+    //     need one more block where the first byte is a file stop indicator.
+    //  4. File ends before SHA_BLOCK_SIZE, but 'file_end + 1 byte (file stop indicator) + 8 bytes
+    //     (file size encoding) is greather than SHA_BLOCK_SIZE: in which case read the file in, append
+    //     0x80 to the byte immediately following EOF, and process it.  We'll need one more block with
+    //     file size encoding only.
+    //  5. EOF already reached, but file stop byte has not been appended: generate a block with byte 0
+    //     being the file stop byte (0x80).  This occured because case 3 was hit previously.  Flag that
+    //     this is the last block.
+    //  6. EOF already reached, file stop byte has already been appended: generate a block of all 0x00,
+    //     and flag that this is the last block.  This occured because case 4 was hit previously.
+    //     This block is only to include file size encoding.  Flag that this is the last block.
+    do {
+        bytesRead = 0;
+        //if (!eofReached && ((bytesRemaining - SHA_BLOCK_SIZE_BYTES) > 9)) {
+            // Cases one and two
+            for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
+                if (bytesRemaining > 0) {
+                    fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
+                    bytesRead++;
+                    bytesRemaining--;
+                }else if (!fileStopByteAdded) {
+                    eofReached = true;
+                    fileReadBuffer[i] = 0x80;
+                    fileStopByteAdded = true;
+                    bytesRead++;
+                    bytesRemaining--;
+                }else {
+                    fileReadBuffer[i] = 0x00;
+                    bytesRemaining--;
+                }
+            }
+
+            generateMsgBlock(fileReadBuffer, bytesRead, eofReached, &msgBlock);
+
+            for (int i = 0; i < 16; i++) {
+                printf("%08x \n", msgBlock.blockWords[i]);
+            }
+
+            generateMsgSchedule(&msgBlock, &msgSchedule);
+            shaProcessMsgSchedule(&msgSchedule);
+
+        //} else if (eofReached) {
+        //    // TODO: case 3
+        //} else {
+        //    // TODO: cases 4, 5, and 6
+        //    long long bytesToDo = bytesRemaining - SHA_BLOCK_SIZE_BYTES;
+        //    //switch (bytesToDo) {
+        //    //    case (bytesToDo == 0):
+        //    //        // Handle case 4
+        //    //        break;
+        //    //    case (bytesToDo > 8):
+        //    //        // Handle case 9
+        //    //        break;
+        //    //    case (bytesToDo > 1):
+
+        //    //        break;
+
+        //    //}
+        //}
+
+    }while (bytesRemaining > 0);
+
+    fclose(filePointer);
 }
 
 /**
@@ -173,10 +247,10 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
         }
 
         // Since this is the last block, the last two words (8 bytes/64bits) are the 
-        // original length of the message in bits, as an unsigned 64 bit integer.
-        uint64_t messageLength = (uint64_t)fileSize * 8;
-        msgBlock->blockWords[14] = (messageLength >> 32) | msgBlock->blockWords[14];
-        msgBlock->blockWords[15] = messageLength | msgBlock->blockWords[15];
+        // original length of the file in bits, as an unsigned 64 bit integer.
+        uint64_t fileLengthEnc = (uint64_t)fileSize * 8;
+        msgBlock->blockWords[14] = (fileLengthEnc >> 32) | msgBlock->blockWords[14];
+        msgBlock->blockWords[15] = fileLengthEnc | msgBlock->blockWords[15];
     }
 }
 

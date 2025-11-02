@@ -27,10 +27,11 @@ typedef struct _MsgSchedule {
 // Function declarations
 void checkProgramArgValidity(int argc);
 bool checkEndianness();
-void openAndAnalyzeFile(FILE* filePointer, char* filePath);
+void analyzeFile(FILE* filePointer, char* filePath);
 void generateMsgSchedule(MsgBlock *msgBlock, MsgSchedule *msgSchedule);
 void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock, 
                         MsgBlock *msgBlock);
+void shaProcessFile(FILE* filePointer, char* filePath);
 void shaProcessMsgSchedule(MsgSchedule *msgSchedule);
 void printWorkingRegisters();
 
