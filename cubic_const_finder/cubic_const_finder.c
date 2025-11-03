@@ -1,5 +1,5 @@
 /**
- * File:       const_finder.c
+ * File:       cubic_const_finder.c
  * Author:     Franklyn Dahlberg
  * Created:    02 August, 2025
  * Copyright:  2025 (c) Franklyn Dahlberg
@@ -12,13 +12,12 @@
 #include <stdlib.h>
 
 /**
- * There are 64 constants used in the SHA-256 hashing algorithm, that are used
+ * There are 64 cubic constants used in the SHA-256 hashing algorithm that are used
  * to "add data" to the message that is being hashed.  These constants are defined
  * as the first 32 bits of the franctional component of the cubed root of the first
  * 64 prime numbers.  These are of course constants and are just defined in the 
  * algorithm, but I thought it would be fun to derive them myself.
  */
-
 
 // Function declarations
 bool isPrime(int testInt);
@@ -29,30 +28,29 @@ uint32_t determineShaConstant(int prime);
  */
 void main(int argc, char *argv[]) {
 
-    int primesFound = 0;
-    int primesNeeded = 0;
+    int constantsFound = 0;
+    int constantsNeeded = 0;
 
     if (argc != 2) {
         printf("Pass the number of constants to determine as an argument"
                " to this program.\n");
-        printf("\tEg. ./const_finder 64\n");
+        printf("\tEg. ./cubic_const_finder 64\n");
         printf("Exiting.\n\n");
         exit(2);
     }
 
-    primesNeeded = atoi(argv[1]);
+    constantsNeeded = atoi(argv[1]);
 
     int testNum = 2;
 	double primeDouble;
-	double cubeRoot;
 
-    while (primesFound < primesNeeded) {
+    while (constantsFound < constantsNeeded) {
         if (isPrime(testNum)) {
-			primeDouble = testNum;
+            primeDouble = testNum;
 
-            primesFound++;
+            constantsFound++;
             uint32_t shaConstant = determineShaConstant(testNum);
-            printf("SHA Constant #%d: Prime %d    Constant:%08x\n", primesFound, testNum, shaConstant);
+            printf("SHA Constant %2d: Prime %-3d    Constant: %08x\n", constantsFound, testNum, shaConstant);
         }
 
         testNum++;
@@ -89,7 +87,7 @@ uint32_t determineShaConstant(int prime) {
     int nonFracComponent = cubeRoot;     
     double fracComponent = cubeRoot - nonFracComponent;
 
-    // We want the first 32 bits of the fractional component (16 hex chars), and we need to shift
+    // We want the first 32 bits of the fractional component (8 hex chars), and we need to shift the
     // fractional component left to get just that amount.  To shift the first x chars of a decimal number,
     // we multiply the number by 10^x.  Similiarly, to shift the first x chars of a hex number, we multiply
     // the number by 16^x.
