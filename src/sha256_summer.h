@@ -41,7 +41,7 @@ uint32_t lowSig1(uint32_t x);
 uint32_t upSig0(uint32_t x);
 uint32_t upSig1(uint32_t x);
 uint32_t choice(uint32_t x, uint32_t y, uint32_t z);
-uint32_t maj(uint32_t x, uint32_t y, uint32_t z);
+uint32_t majority(uint32_t x, uint32_t y, uint32_t z);
 
 //Constants
 // Square root constants

@@ -25,6 +25,8 @@ bool lastBlockSizeOverflow;
 int blocksNeeded;
 int paddingNeeded;           // Bits of padding needed without length encoding.
                              
+int blocksProcessed = 0;
+                             
 // Working registers that hold the intermediate hash.  From the FIPS paper:
 // Index 0: a
 // Index 1: b
@@ -117,7 +119,7 @@ void analyzeFile(FILE* filePointer, char* filePath) {
     printf("File word size: %ld\n", fileWordSize);
 
     printf("Message blocks needed: %d\nBits in the last block: %d\nPadding"
-           " needed (without length encoding): %d\n", blocksNeeded, 
+           " needed (without length encoding): %d\n\n", blocksNeeded, 
            bitsInLastBlock, paddingNeeded);
 }
 
@@ -130,10 +132,12 @@ void analyzeFile(FILE* filePointer, char* filePath) {
 void shaProcessFile(FILE* filePointer, char* filePath) {
     filePointer = fopen(filePath, "rb");
     long long bytesRemaining = fileSize;
-
     int bytesRead = 0;
-    bool fileStopByteAdded = false;
+
     bool eofReached = false;
+    bool fileStopByteAdded = false;
+    bool fileSizeEncodingAdded = false;
+    bool lastBlock = false;
 
     MsgBlock msgBlock;
     MsgSchedule msgSchedule;
@@ -148,7 +152,7 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
     //  3. File ends at SHA_BLOCK_SIZE EXACTLY: in which case read the file in and process it.  We'll
     //     need one more block where the first byte is a file stop indicator.
     //  4. File ends before SHA_BLOCK_SIZE, but 'file_end + 1 byte (file stop indicator) + 8 bytes
-    //     (file size encoding) is greather than SHA_BLOCK_SIZE: in which case read the file in, append
+    //     (file size encoding) is greater than SHA_BLOCK_SIZE: in which case read the file in, append
     //     0x80 to the byte immediately following EOF, and process it.  We'll need one more block with
     //     file size encoding only.
     //  5. EOF already reached, but file stop byte has not been appended: generate a block with byte 0
@@ -159,8 +163,20 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
     //     This block is only to include file size encoding.  Flag that this is the last block.
     do {
         bytesRead = 0;
-        //if (!eofReached && ((bytesRemaining - SHA_BLOCK_SIZE_BYTES) > 9)) {
-            // Cases one and two
+
+        printf("EOF reached %d  SHA_BLOCK_SIZE_BYTES - bytesRemaining: %lld\n", 
+                eofReached, (SHA_BLOCK_SIZE_BYTES - bytesRemaining));
+
+        if (bytesRemaining > SHA_BLOCK_SIZE_BYTES) {
+            printf("Here in case 1\n");
+            for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
+                fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
+                bytesRead++;
+                bytesRemaining--;
+            }
+        }else if (!eofReached && ((SHA_BLOCK_SIZE_BYTES - bytesRemaining) > 8)) {
+            // Cases one and two, read the file in, apply the stop bit as needed
+            printf("Here in case 2\n");
             for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
                 if (bytesRemaining > 0) {
                     fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
@@ -177,36 +193,79 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
                     bytesRemaining--;
                 }
             }
-
-            generateMsgBlock(fileReadBuffer, bytesRead, eofReached, &msgBlock);
-
-            for (int i = 0; i < 16; i++) {
-                printf("%08x \n", msgBlock.blockWords[i]);
+            fileSizeEncodingAdded = true;
+            lastBlock = true;
+        }else if (!eofReached && ((SHA_BLOCK_SIZE_BYTES - bytesRemaining) == 0)) {
+            printf("Here in case 3\n");
+            // Case three, just read in the file, make a block, and process it
+            for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
+                fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
+                bytesRead++;
+                bytesRemaining--;
             }
+            eofReached = true;
+        }else if (!eofReached && ((SHA_BLOCK_SIZE_BYTES - bytesRemaining) < 8)) {
+            printf("Here in case 4\n");
+            // Case four, we have enough room for the file stop indicator, but not
+            // enough room for file size encoding.  Read the file, append the file
+            // stop indicator, but fileSizeEncoding will be handled in the next block.
+            for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
+                if (bytesRemaining > 0) {
+                    fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
+                    bytesRead++;
+                    bytesRemaining--;
+                }else if (!fileStopByteAdded) {
+                    eofReached = true;
+                    fileReadBuffer[i] = 0x80;
+                    fileStopByteAdded = true;
+                    bytesRead++;
+                    bytesRemaining--;
+                }else {
+                    fileReadBuffer[i] = 0x00;
+                    bytesRemaining--;
+                }
+            }
+            eofReached = true;
+        }else if (eofReached && !fileStopByteAdded) {
+            printf("Here in case 5\n");
+            // Case five, we've previously hit case three, add the file stop byte to
+            // the first byte of the block, and read in zeros for everything else.
+            fileReadBuffer[0] = 0x80;
+            bytesRemaining--;
+            fileStopByteAdded = true;
+            for (int i = 1; i < SHA_BLOCK_SIZE_BYTES; i++) {
+                fileReadBuffer[i] = 0x00;
+                bytesRemaining--;
+            }
+            fileSizeEncodingAdded = true;
+            lastBlock = true;
+        }else if (eofReached && fileStopByteAdded) {
+            printf("Here in case 6\n");
+            // Case five, we've previously hit case three, add the file stop byte to
+            // Case six, we've previously hit case four, we just need a block of
+            // all zeros at this point
+            for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
+                fileReadBuffer[i] = 0x00;
+                bytesRemaining--;
+            }
+            fileSizeEncodingAdded = true;
+            lastBlock = true;
+        }
 
-            generateMsgSchedule(&msgBlock, &msgSchedule);
-            shaProcessMsgSchedule(&msgSchedule);
+        printf("Byte Buffer: %d\n", blocksProcessed);
+        for(int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
+            if ((i % 4) == 0) {
+                printf("\n");
+            }
+            printf("%02x ", fileReadBuffer[i]);
+        }
+        printf("\n\n");
 
-        //} else if (eofReached) {
-        //    // TODO: case 3
-        //} else {
-        //    // TODO: cases 4, 5, and 6
-        //    long long bytesToDo = bytesRemaining - SHA_BLOCK_SIZE_BYTES;
-        //    //switch (bytesToDo) {
-        //    //    case (bytesToDo == 0):
-        //    //        // Handle case 4
-        //    //        break;
-        //    //    case (bytesToDo > 8):
-        //    //        // Handle case 9
-        //    //        break;
-        //    //    case (bytesToDo > 1):
+        generateMsgBlock(fileReadBuffer, bytesRead, lastBlock, &msgBlock);
+        generateMsgSchedule(&msgBlock, &msgSchedule);
+        shaProcessMsgSchedule(&msgSchedule);
 
-        //    //        break;
-
-        //    //}
-        //}
-
-    }while (bytesRemaining > 0);
+    }while (!eofReached && !fileStopByteAdded);
 
     fclose(filePointer);
 }
@@ -246,12 +305,33 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
             wordCount++;
         }
 
-        // Since this is the last block, the last two words (8 bytes/64bits) are the 
+        // Since this is the last block, the last two words (8 bytes/64 bits) are the 
         // original length of the file in bits, as an unsigned 64 bit integer.
         uint64_t fileLengthEnc = (uint64_t)fileSize * 8;
+        printf("File size encoding: %ld    %016lx\n", fileLengthEnc, fileLengthEnc);
+        msgBlock->blockWords[14] = 0x00;
+        msgBlock->blockWords[15] = 0x00;
+
         msgBlock->blockWords[14] = (fileLengthEnc >> 32) | msgBlock->blockWords[14];
         msgBlock->blockWords[15] = fileLengthEnc | msgBlock->blockWords[15];
+    } else {
+        // If this isn't the last block, just copy the byte buffer into the message block
+        for (int i = 0; i < 16; i++) {
+            for (int j = 0; j < 4; j++) {
+                msgBlock->blockWords[wordCount] = 
+                    (msgBlock->blockWords[wordCount] << 8) | byteBuffer[byteCount];
+                byteCount++;
+            }
+        wordCount++;
+        }
     }
+
+    printf("Block: %d\n", blocksProcessed);
+    for(int i = 0; i < 16; i++) {
+        printf("%08x\n", msgBlock->blockWords[i]);
+    }
+    printf("\n\n");
+    blocksProcessed++;
 }
 
 /**
@@ -295,7 +375,7 @@ void shaProcessMsgSchedule(MsgSchedule *msgSchedule) {
              choice(workingRegisters[4], workingRegisters[5], workingRegisters[6]) + 
              workingRegisters[7] + cubicConst[i] + msgSchedule->scheduleWords[i];
         T2 = upSig0(workingRegisters[0]) + 
-             maj(workingRegisters[0], workingRegisters[1], workingRegisters[2]);
+             majority(workingRegisters[0], workingRegisters[1], workingRegisters[2]);
 
         // Shift all registers to the right one place (h registers falls off)
         for (int j = 7; j > 0; j--) {
@@ -406,7 +486,7 @@ uint32_t choice(uint32_t x, uint32_t y, uint32_t z) {
  * if at least two inputs have a zero, the result will be zero.  If at
  * least two bits have a one, the result will be one.
  */
-uint32_t maj(uint32_t x, uint32_t y, uint32_t z) {
+uint32_t majority(uint32_t x, uint32_t y, uint32_t z) {
     return (x & y) ^ (x & z) ^ (y & z);
 }
 
