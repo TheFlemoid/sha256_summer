@@ -22,7 +22,7 @@ int bitsInLastBlock;         // The number of bits in the last block.
 bool lastBlockSizeOverflow;
 int blocksNeeded;
 int paddingNeeded;           // Bits of padding needed without length encoding.
-                             
+
 // Working registers that hold the intermediate hash.  From the FIPS paper:
 // Index 0: a
 // Index 1: b
@@ -40,6 +40,10 @@ uint32_t workingRegisters[8] = {squareConst[0], squareConst[1], squareConst[2],
 // Temp registers, used to temporarily hold the values of the working registers
 // during processing.
 uint32_t tempRegisters[8];
+
+// Temporary values, used during compression.
+uint32_t T1;
+uint32_t T2;
 
 /**
  * Program main
@@ -186,8 +190,8 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
             fileSizeEncodingAdded = true;
             lastBlock = true;
         }else if (!eofReached && ((SHA_BLOCK_SIZE_BYTES - bytesRemaining) == 0)) {
-            //printf("Here in case 3\n");
             // Case three, just read in the file, make a block, and process it
+            //printf("Here in case 3\n");
             for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
                 fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
                 bytesRead++;
@@ -230,10 +234,9 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
             fileSizeEncodingAdded = true;
             lastBlock = true;
         }else if (eofReached && fileStopByteAdded) {
-            printf("Here in case 6\n");
-            // Case five, we've previously hit case three, add the file stop byte to
             // Case six, we've previously hit case four, we just need a block of
             // all zeros at this point
+            //printf("Here in case 6\n");
             for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
                 fileReadBuffer[i] = 0x00;
                 bytesRemaining--;
@@ -310,7 +313,7 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
 /**
  * Only the first 16 registers of the message block contain actual data, the other 48
  * registers are initialized to values based on the first 16 registers.  Given a block
- * with the first 16 registers filled out, this fills out the rest of the schedule.
+ * with 16 registers filled out, this fills out the rest of the schedule.
  *
  * @param msgBlock object to generate the schedule for
  * @param msgSchedule object to fill out
@@ -332,15 +335,12 @@ void generateMsgSchedule(MsgBlock *msgBlock, MsgSchedule *msgSchedule) {
 }
 
 /**
- * Performs the SHA-256 algorithm on the param message schedule, updating the working.
+ * Performs the SHA-256 algorithm on the param message schedule, updating the 
+ * working registers.
  *
  * @param MsgSchedule pointer of data to execute on
  */
 void shaProcessMsgSchedule(MsgSchedule *msgSchedule) {
-    // Temporary values
-    uint32_t T1;
-    uint32_t T2;
-
     // Copy all the working registers to the temp registers, to add that
     // data back in after performing compression.
     for (int i = 0 ; i < 8; i++) {
