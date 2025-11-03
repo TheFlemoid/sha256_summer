@@ -15,17 +15,13 @@
 const int SHA_BLOCK_SIZE_BYTES = 64;
 
 FILE* filePointer;
-uint32_t *messageBuffer;
 
-bool isBigEndian;
 long fileSize;               // The length of the file in bytes
 long fileWordSize;           // The length of the file in 32 bit words 
 int bitsInLastBlock;         // The number of bits in the last block.
 bool lastBlockSizeOverflow;
 int blocksNeeded;
 int paddingNeeded;           // Bits of padding needed without length encoding.
-                             
-int blocksProcessed = 0;
                              
 // Working registers that hold the intermediate hash.  From the FIPS paper:
 // Index 0: a
@@ -44,13 +40,6 @@ uint32_t workingRegisters[8] = {squareConst[0], squareConst[1], squareConst[2],
 // Temp registers, used to temporarily hold the values of the working registers
 // during processing.
 uint32_t tempRegisters[8];
-
-// Temporary values
-uint32_t T1;
-uint32_t T2;
-
-// Buffer for reading the file in
-uint8_t fileReadBuffer[512];
 
 /**
  * Program main
@@ -80,7 +69,7 @@ void analyzeFile(FILE* filePointer, char* filePath) {
     }
 
     // Seek to the end of the file.  This is used to determine the size of 
-    // the message buffer.
+    // the file.
     if (fseek(filePointer, 0, SEEK_END) != 0) {
         printf("Error reading file: %s\nExiting.\n\n", filePath);
         exit(3);
@@ -115,12 +104,12 @@ void analyzeFile(FILE* filePointer, char* filePath) {
                               // padding and message length encoding.
     }
 
-    printf("File Size: %ld bytes\n", fileSize);
-    printf("File word size: %ld\n", fileWordSize);
+    //printf("File Size: %ld bytes\n", fileSize);
+    //printf("File word size: %ld\n", fileWordSize);
 
-    printf("Message blocks needed: %d\nBits in the last block: %d\nPadding"
-           " needed (without length encoding): %d\n\n", blocksNeeded, 
-           bitsInLastBlock, paddingNeeded);
+    //printf("Message blocks needed: %d\nBits in the last block: %d\nPadding"
+    //       " needed (without length encoding): %d\n\n", blocksNeeded, 
+    //       bitsInLastBlock, paddingNeeded);
 }
 
 /**
@@ -138,6 +127,9 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
     bool fileStopByteAdded = false;
     bool fileSizeEncodingAdded = false;
     bool lastBlock = false;
+
+    // Buffer for reading the file in
+    uint8_t fileReadBuffer[512];
 
     MsgBlock msgBlock;
     MsgSchedule msgSchedule;
@@ -345,6 +337,10 @@ void generateMsgSchedule(MsgBlock *msgBlock, MsgSchedule *msgSchedule) {
  * @param MsgSchedule pointer of data to execute on
  */
 void shaProcessMsgSchedule(MsgSchedule *msgSchedule) {
+    // Temporary values
+    uint32_t T1;
+    uint32_t T2;
+
     // Copy all the working registers to the temp registers, to add that
     // data back in after performing compression.
     for (int i = 0 ; i < 8; i++) {
@@ -405,7 +401,7 @@ void checkProgramArgValidity(int argc) {
 uint32_t lowSig0(uint32_t x) {
 
     // Rotate 7 bits to the right (since we know we are using a 32 bit word, 
-    // we shift the word seven bits right, and then or that with the word
+    // we shift the word seven bits right, and then OR that with the word
     // shifted 25 (32 - 7) bits to the left.
     uint32_t a = (x >> 7) | (x << 25);  // ROTR 7
     uint32_t b = (x >> 18) | (x << 14); // ROTR 18
