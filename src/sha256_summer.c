@@ -164,19 +164,17 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
     do {
         bytesRead = 0;
 
-        printf("EOF reached %d  SHA_BLOCK_SIZE_BYTES - bytesRemaining: %lld\n", 
-                eofReached, (SHA_BLOCK_SIZE_BYTES - bytesRemaining));
-
         if (bytesRemaining > SHA_BLOCK_SIZE_BYTES) {
-            printf("Here in case 1\n");
+            // Cases one, just read the file in
+            //printf("Here in case 1\n");
             for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
                 fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
                 bytesRead++;
                 bytesRemaining--;
             }
         }else if (!eofReached && ((SHA_BLOCK_SIZE_BYTES - bytesRemaining) > 8)) {
-            // Cases one and two, read the file in, apply the stop bit as needed
-            printf("Here in case 2\n");
+            // Cases two, read the file in, apply the stop bit as needed
+            //printf("Here in case 2\n");
             for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
                 if (bytesRemaining > 0) {
                     fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
@@ -196,7 +194,7 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
             fileSizeEncodingAdded = true;
             lastBlock = true;
         }else if (!eofReached && ((SHA_BLOCK_SIZE_BYTES - bytesRemaining) == 0)) {
-            printf("Here in case 3\n");
+            //printf("Here in case 3\n");
             // Case three, just read in the file, make a block, and process it
             for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
                 fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
@@ -205,10 +203,10 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
             }
             eofReached = true;
         }else if (!eofReached && ((SHA_BLOCK_SIZE_BYTES - bytesRemaining) < 8)) {
-            printf("Here in case 4\n");
             // Case four, we have enough room for the file stop indicator, but not
             // enough room for file size encoding.  Read the file, append the file
             // stop indicator, but fileSizeEncoding will be handled in the next block.
+            //printf("Here in case 4\n");
             for (int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
                 if (bytesRemaining > 0) {
                     fread(&fileReadBuffer[i], sizeof(uint8_t), 1, filePointer);
@@ -227,9 +225,9 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
             }
             eofReached = true;
         }else if (eofReached && !fileStopByteAdded) {
-            printf("Here in case 5\n");
             // Case five, we've previously hit case three, add the file stop byte to
             // the first byte of the block, and read in zeros for everything else.
+            //printf("Here in case 5\n");
             fileReadBuffer[0] = 0x80;
             bytesRemaining--;
             fileStopByteAdded = true;
@@ -252,20 +250,11 @@ void shaProcessFile(FILE* filePointer, char* filePath) {
             lastBlock = true;
         }
 
-        printf("Byte Buffer: %d\n", blocksProcessed);
-        for(int i = 0; i < SHA_BLOCK_SIZE_BYTES; i++) {
-            if ((i % 4) == 0) {
-                printf("\n");
-            }
-            printf("%02x ", fileReadBuffer[i]);
-        }
-        printf("\n\n");
-
         generateMsgBlock(fileReadBuffer, bytesRead, lastBlock, &msgBlock);
         generateMsgSchedule(&msgBlock, &msgSchedule);
         shaProcessMsgSchedule(&msgSchedule);
 
-    }while (!eofReached && !fileStopByteAdded);
+    }while (!eofReached && !fileStopByteAdded && !fileSizeEncodingAdded);
 
     fclose(filePointer);
 }
@@ -307,11 +296,10 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
 
         // Since this is the last block, the last two words (8 bytes/64 bits) are the 
         // original length of the file in bits, as an unsigned 64 bit integer.
-        uint64_t fileLengthEnc = (uint64_t)fileSize * 8;
-        printf("File size encoding: %ld    %016lx\n", fileLengthEnc, fileLengthEnc);
         msgBlock->blockWords[14] = 0x00;
         msgBlock->blockWords[15] = 0x00;
 
+        uint64_t fileLengthEnc = (uint64_t)fileSize * 8;
         msgBlock->blockWords[14] = (fileLengthEnc >> 32) | msgBlock->blockWords[14];
         msgBlock->blockWords[15] = fileLengthEnc | msgBlock->blockWords[15];
     } else {
@@ -325,13 +313,6 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
         wordCount++;
         }
     }
-
-    printf("Block: %d\n", blocksProcessed);
-    for(int i = 0; i < 16; i++) {
-        printf("%08x\n", msgBlock->blockWords[i]);
-    }
-    printf("\n\n");
-    blocksProcessed++;
 }
 
 /**
@@ -398,7 +379,7 @@ void shaProcessMsgSchedule(MsgSchedule *msgSchedule) {
  */
 void printWorkingRegisters() {
     for (int i = 0; i < 8; i++) {
-        printf("%04x", workingRegisters[i]);
+        printf("%08x", workingRegisters[i]);
     }
     printf("\n");
 }
