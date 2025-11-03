@@ -305,7 +305,7 @@ void generateMsgBlock(uint8_t* byteBuffer, int bufferLength, bool lastBlock,
                     (msgBlock->blockWords[wordCount] << 8) | byteBuffer[byteCount];
                 byteCount++;
             }
-        wordCount++;
+            wordCount++;
         }
     }
 }
